@@ -7,6 +7,7 @@ function [result] = optim(problem);
 	model.eval = 0;
 	
 	tic
+	% this is a comment
 	
 	% the following were taken out of optimsettings, because they do not need to be user modifiable
 	checkderivatives 		= 0;			% check the derivatives (1) or not (0)
