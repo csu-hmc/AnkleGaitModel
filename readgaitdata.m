@@ -23,6 +23,7 @@ function [data] = readgaitdata(filename, movement)
 %	Fx_k, Fy_k		force applied to knee by shank (shank reference frame)
 %	M_h				hip moment
 %   M_k				knee moment
+%   P_a             ankle power
 
 % These variables are all defined in Prosthesis_Geometry_2010_06_01.doc (except knee and ankle position)
 
@@ -41,12 +42,15 @@ function [data] = readgaitdata(filename, movement)
 	d = xlsread(filename, 'Subject', '', 'basic');
 	data.subjectID = d(3,1);
 	data.mass = d(4,1);
+    
+    
 
 	% now read the movement data
 	d = xlsread(filename, movement, '', 'basic');
-	keyboard
+	%keyboard
 	data.cadence = d(1,2);
 	d = d(5:end,:);			% remove the four header lines
+    
 
 	% time
 	data.t_perc = d(:,2);
@@ -59,6 +63,7 @@ function [data] = readgaitdata(filename, movement)
 		error('Time(%) is not equally spaced.');
 	end
 	data.cycle = max(data.t) + data.t(end) - data.t(end-1);
+    
     
     
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -93,51 +98,10 @@ function [data] = readgaitdata(filename, movement)
 	data.phi_2 = atan2(data.x_a - data.x_k, data.y_k - data.y_a);   %Shank
     
     %=================================NM====================================
-	% joint angles and moments
-	data.phi_k = -d(:,4)*pi/180;				% convert to ankle angle in rad, negative when flexed
-	data.M_h = d(:,20)*data.mass;				% convert to Nm, positive for dorsiflexion moment (flexion)
-	data.M_k = d(:,19)*data.mass;				% convert to Nm, positive for plantarflexion moment (extension)
+	% joint angles and moments and power output
+	data.phi_k = -d(:,4)*pi/180;				% convert to ankle angle in rad, positive for dorsiflexion
+	data.M_k = -d(:,19)*data.mass;				% convert to Nm, positive for dorsiflexion
+    data.P_a = d(:,22);                         % power data for ankle
 	%=================================NM====================================
-    
-    %=================================NM====================================
-	% joint angles and moments
-	% joint force at ankle
-	Fx = d(:,8)*data.mass*g;
-	Fy = d(:,9)*data.mass*g;
-	% transform from thigh coordinate system (Orthotrak) to global coordinates
-	% Orthotrak: Fx,Fy>0 when leg pushes pelvis posteriorly and up (see, e.g sit-stand-sit results)
-	Fx = -Fx.*cos(data.phi_2) - Fy.*sin(data.phi_2);
-	Fy = Fy.*cos(data.phi_2) - Fx.*sin(data.phi_2);
-     %=================================NM====================================
-	
-	if (gait)
-		% resample the data at a 50% phase shift, so we get force at other leg
-		% BUT ONLY IF GAIT IS SYMMETRIC!
-		% this will cause a discontinuity when the data is not perfectly periodic
-		F = [Fx Fy];					% put Fx and Fy data together in matrix
-		F = [F ; F];					% make two gait cycles
-		t = [data.t_perc ; data.t_perc + 100];	% and corresponding original percentage times
-		F = interp1(t, F, data.t_perc  + 50);	% resample from 50% to 150% of the original gait cycle
-		Fx = F(:,1);					% extract Fx and Fy again
-		Fy = F(:,2);
-	end
-	data.Fx_h = Fx;
-	data.Fy_h = Fy;
-    
-	%=================================NM (not used)========================
-	% joint force at knee
-	% we leave this in shank reference frame, this is how the sensors see it
-	Fx = d(:,8)*data.mass*g;
-	Fy = d(:,9)*data.mass*g;
-	% transform from thigh coordinate system (Orthotrak) to shank XY coordinates
-	% Orthotrak: Fx,Fy>0 when shank pushes thigh posteriorly and up (see, e.g sit-stand-sit results)
-	data.Fx_k = -Fx;
-	data.Fy_k = Fy;
-	%=================================NM====================================
-    
-    %=================================NM====================================
-	% link lengths for thigh (L1) and shank (L2)
-	data.L1 = mean(sqrt((data.x_k-data.x_h).^2 + (data.y_k-data.y_h).^2));
-	data.L2 = mean(sqrt((data.x_a-data.x_k).^2 + (data.y_a-data.y_k).^2));
-    %=================================NM====================================
+
 end
