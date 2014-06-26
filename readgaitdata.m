@@ -47,7 +47,6 @@ function [data] = readgaitdata(filename, movement)
 
 	% now read the movement data
 	d = xlsread(filename, movement, '', 'basic');
-	%keyboard
 	data.cadence = d(1,2);
 	d = d(5:end,:);			% remove the four header lines
     
@@ -99,9 +98,21 @@ function [data] = readgaitdata(filename, movement)
     
     %=================================NM====================================
 	% joint angles and moments and power output
-	data.phi_k = -d(:,4)*pi/180;				% convert to ankle angle in rad, positive for dorsiflexion
+	data.phi_k = d(:,4)*pi/180;				% convert to ankle angle in rad, positive for dorsiflexion
 	data.M_k = -d(:,19)*data.mass;				% convert to Nm, positive for dorsiflexion
-    data.P_a = d(:,22);                         % power data for ankle
+    %data.P_a = d(:,22);                         % power data for ankle
+    
+    % Joint angular velocities from manual differentiation
+    nsamples = size(d,1);
+    omega = NaN(nsamples,1);
+    for i=2:nsamples-1                         % Loop starts at 2 becuase angle analysis does not start at 0
+        omega(i) = (data.phi_k(i+1) - data.phi_k(i-1))...
+               /(data.t(i+1) - data.t(i-1));
+    end
+    data.P_a = omega .* data.M_k;
+    plot(data.t_perc,data.P_a)
+    keyboard
 	%=================================NM====================================
+
 
 end
