@@ -9,7 +9,7 @@ function [result] = optim(problem);
 	tic
 	
 	% the following were taken out of optimsettings, because they do not need to be user modifiable
-	checkderivatives 		= 0;			% check the derivatives (1) or not (0)
+	checkderivatives 		= 1;			% check the derivatives (1) or not (0)
 	modifyinitialguess		= 'none';		% gaitdata: phi and M in initial guess are replaced by gait data
 	FeasibilityTolerance 	= 1e-5;         
 	OptimalityTolerance 	= 1e-4;
@@ -51,6 +51,7 @@ function [result] = optim(problem);
 	model.B2 = problem.B2;
 	model.datafile = char(gaitdata(1,1));
 	model.movement = char(gaitdata(1,2));
+    keyboard
 	
 	% load and store gait data
 	ndata = size(gaitdata,1);
@@ -70,9 +71,10 @@ function [result] = optim(problem);
         model.gait.M = data.M_k;
         model.gait.P = data.P_a;    %(NM-power for the ankle)
     end
-    mass = xlsread('gaitdata_template','Subject','B4'); % Extracting the mass to be later used
-    mass = mass(4)
-	
+    
+    kgmass = xlsread('Gait_Data_Sub1','Subject','B4'); % Extracting the mass to be later used
+    mass = kgmass(4);
+    	
 	% resample the gait data into N time points, if needed
 	if (N > size(model.gait.phi,1))							% do not do more than gait data
 		disp('WARNING: N was decreased to number of data samples.');
@@ -85,7 +87,7 @@ function [result] = optim(problem);
 		newtimes = (0:N-1)'/N*model.gait.T;							% the resample times
 		model.gait.phi = interp1(oldtimes, model.gait.phi, newtimes);
 		model.gait.M   = interp1(oldtimes, model.gait.M  , newtimes);
-        model.gait.P   = interpl(oldtimes, model.gait.P  , newtimes);
+        model.gait.P   = interp1(oldtimes, model.gait.P  , newtimes);
 	end
 	
 	N = size(model.gait.phi,1);			% number of samples in gait data
@@ -93,6 +95,7 @@ function [result] = optim(problem);
 	h = model.gait.T/N;					% time step from the gait data, will also be the time step for direct collocation
 	model.h = h;
 	fprintf('Gait data loaded: %d samples per gait cycle.\n',N); 
+    
 	
 	% collocation grid and unknowns
 	Nvarpernode = 8;			% number of unknowns per node: u1,u2,s,v1,v2,phi,M, u3  (NM-added u3 to variables per node)
@@ -162,6 +165,7 @@ function [result] = optim(problem);
 	U(model.ik) = U_k;
 	L(model.iP0) = 0;				% should be zero to avoid leakage
 	U(model.iP0) = 0;				% should be zero to avoid leakage
+    
 	if problem.prescribe_kinematics		% constrain kinematics to be equal to gait data
 		L(model.iphi) = model.gait.phi;
 		U(model.iphi) = model.gait.phi;
@@ -196,7 +200,7 @@ function [result] = optim(problem);
 		
 		% interpolate to the current number of nodes
 		x0 = interp1((0:N0)'/N0,x0,(0:N-1)'/N,'linear','extrap');
-		X0 = reshape(x0',7*N,1);
+		X0 = reshape(x0',8*N,1);    %(NM-Changed to 8 for 8th variable)
 		X0 = [X0 ; P0 ; k];
 
 	end
