@@ -9,7 +9,7 @@ function [result] = optim(problem);
 	tic
 	
 	% the following were taken out of optimsettings, because they do not need to be user modifiable
-	checkderivatives 		= 1;			% check the derivatives (1) or not (0)
+	checkderivatives 		= 0;			% check the derivatives (1) or not (0)
 	modifyinitialguess		= 'none';		% gaitdata: phi and M in initial guess are replaced by gait data
 	FeasibilityTolerance 	= 1e-5;         
 	OptimalityTolerance 	= 1e-4;
@@ -51,7 +51,7 @@ function [result] = optim(problem);
 	model.B2 = problem.B2;
 	model.datafile = char(gaitdata(1,1));
 	model.movement = char(gaitdata(1,2));
-    keyboard
+
 	
 	% load and store gait data
 	ndata = size(gaitdata,1);
@@ -67,14 +67,12 @@ function [result] = optim(problem);
             error('Time interval on gait data file is not constant');
         end
         model.gait.T = max(data.t) + mean(tdiff);
-        model.gait.phi = data.phi_k;
-        model.gait.M = data.M_k;
+        model.gait.phi = data.phi_a;
+        model.gait.M = data.M_a;
         model.gait.P = data.P_a;    %(NM-power for the ankle)
     end
     
-    kgmass = xlsread('Gait_Data_Sub1','Subject','B4'); % Extracting the mass to be later used
-    mass = kgmass(4);
-    	
+
 	% resample the gait data into N time points, if needed
 	if (N > size(model.gait.phi,1))							% do not do more than gait data
 		disp('WARNING: N was decreased to number of data samples.');
@@ -88,8 +86,9 @@ function [result] = optim(problem);
 		model.gait.phi = interp1(oldtimes, model.gait.phi, newtimes);
 		model.gait.M   = interp1(oldtimes, model.gait.M  , newtimes);
         model.gait.P   = interp1(oldtimes, model.gait.P  , newtimes);
-	end
+    end
 	
+  
 	N = size(model.gait.phi,1);			% number of samples in gait data
 	model.N = N;
 	h = model.gait.T/N;					% time step from the gait data, will also be the time step for direct collocation
@@ -165,7 +164,7 @@ function [result] = optim(problem);
 	U(model.ik) = U_k;
 	L(model.iP0) = 0;				% should be zero to avoid leakage
 	U(model.iP0) = 0;				% should be zero to avoid leakage
-    
+    keyboard
 	if problem.prescribe_kinematics		% constrain kinematics to be equal to gait data
 		L(model.iphi) = model.gait.phi;
 		U(model.iphi) = model.gait.phi;
@@ -204,7 +203,7 @@ function [result] = optim(problem);
 		X0 = [X0 ; P0 ; k];
 
 	end
-
+keyboard
 	if numel(strfind(modifyinitialguess,'gaitdata')) > 0
 		% replace the phi and M unknowns with the corresponding gait data
 		X0(model.iphi) = model.gait.phi;
@@ -268,7 +267,7 @@ function [result] = optim(problem);
 		fprintf('Errors in constraint jacobian pattern: \n');
 		[ierr jerr]
 		model.FDvar = 0;
-		%keyboard
+		
 	end
 
 	% report something about the initial guess, unless we're not even optimizing
@@ -362,12 +361,11 @@ function [result] = optim(problem);
 	fprintf('Optimal parameter values:\n');
 	fprintf('    k  = %8.4f MPa/ml    (stiffness of spring loaded reservoir)\n', X(model.ik));
 	fprintf('    P0 = %8.4f MPa       (pressure at constant pressure reservoir)\n', X(model.iP0));
-	
 end
 %===============================================================================
 function report(X, powerreport)
 
-	global model mass
+	global model 
     
 	phi = X(model.iphi)*180/pi;
 	M =   X(model.iM);
@@ -388,48 +386,48 @@ function report(X, powerreport)
     ppump = u3.*P1;
 	gaitphi = model.gait.phi*180/pi;
 	gaitM = model.gait.M;
-    gaitP = (model.gait.P)*mass;    %(NM)
+    gaitP = (model.gait.P);    %(NM)
 	gaitphi = [gaitphi ; gaitphi(1)];
 	gaitM = [gaitM ; gaitM(1)];
     gaitP = [gaitP ; gaitP(1)]; %(NM)
 	figure(1);
 	clf;
 	
-	subplot(3,3,1)  %(NM)
+	subplot(3,3,1)  
 	plot(tperc,-gaitphi,'b',tperc,-phi,'r');
 	ylabel('Ankle Angle (deg)');
 	title(model.datafile);
 	
-	subplot(3,3,4)  %(NM)
+	subplot(3,3,4)  
 	plot(tperc,gaitM,'b',tperc,M,'r');
 	ylabel('Ankle moment (Nm)');
 	legend('desired','prosthesis');
 	xlabel('Time (% of cycle)');
 	
-	subplot(3,3,2)  %(NM)
+	subplot(3,3,2)  
 	plot(tperc,u1);
 	ylabel('Valve 1 control (a.u.)');
 	title(model.movement);
 	
-	subplot(3,3,5)  %(NM)
+	subplot(3,3,5)  
 	plot(tperc,u2);
 	ylabel('Valve 2 control (a.u.)');
 	xlabel('Time (% of cycle)');
 
-	subplot(3,3,3); %(NM)
+	subplot(3,3,3); 
 	plot(tperc, P, tperc, P1);
 	ylabel('pressure (MPa)');
 	legend('P','P1');
 	title(['N = ' num2str(model.N)]);
 
-	subplot(3,3,6); %(NM)
+	subplot(3,3,6); 
 	plot(tperc,v1,tperc,v2, tperc,u3);
 	xlabel('Time (% of cycle)');
 	ylabel('flow (ml/s)');
 	legend('v1','v2','u3');
     
     
-    subplot(3,3,7); %(NM)
+    subplot(3,3,7); 
     plot(tperc,ppump,'r',tperc,gaitP,'b');
     xlabel('Time (% of cycle)');
     ylabel('Power (Watts)');
