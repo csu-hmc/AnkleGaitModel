@@ -24,6 +24,8 @@ function [data] = readgaitdata(filename, movement)
 %	M_h				hip moment
 %   M_k				knee moment
 %   P_a             ankle power
+%   M_a             ankle moment
+%   phi_a           ankle angle
 
 % These variables are all defined in Prosthesis_Geometry_2010_06_01.doc (except knee and ankle position)
 
@@ -35,9 +37,16 @@ function [data] = readgaitdata(filename, movement)
 %	L1				mean distance from hip to knee
 %	L2				mean distance from knee to ankle
 
-	% constants
+ % constants
 	g = 9.81;			% gravity
 
+    % Do you want the program to use the gait data from an Excel file or from the Motek system.
+    Excel   = 0;        % use the Excel data (1) or not (0gait.p)
+    Motek   = 1;        % use the Motek data (1) or not (0)
+    
+
+% If the Excel data is chosen to be used
+if (Excel)
 	% first read the subject data sheet
 	d = xlsread(filename, 'Subject', '', 'basic');
 	data.subjectID = d(3,1);
@@ -50,8 +59,7 @@ function [data] = readgaitdata(filename, movement)
 	data.cadence = d(1,2);
 	d = d(5:end,:);			% remove the four header lines
     
-
-	% time
+    % time
 	data.t_perc = d(:,2);
 	data.t = d(:,3);
 	if (data.t_perc(1) ~= 0)
@@ -63,8 +71,7 @@ function [data] = readgaitdata(filename, movement)
 	end
 	data.cycle = max(data.t) + data.t(end) - data.t(end-1);
     
-    
-    
+    keyboard
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     
     % Added by Rick Rarick 8/18/2010
@@ -74,12 +81,9 @@ function [data] = readgaitdata(filename, movement)
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	
 	% hip, knee, ankle XY position data, convert from mm to m
-	data.x_h = d(:,25)/1000;
-	data.y_h = d(:,27)/1000;
-	data.x_k = d(:,28)/1000;
-	data.y_k = d(:,30)/1000;
-	data.x_a = d(:,31)/1000;
-	data.y_a = d(:,33)/1000;
+	data.x_h = d(:,25)/1000; data.y_h = d(:,27)/1000;
+	data.x_k = d(:,28)/1000; data.y_k = d(:,30)/1000;
+	data.x_a = d(:,31)/1000; data.y_a = d(:,33)/1000;
 	
 	% if there was more than 0.5 m of horizontal motion, we assume it was gait
 	if (abs(data.x_h(end) - data.x_h(1)) > 0.5)
@@ -96,23 +100,58 @@ function [data] = readgaitdata(filename, movement)
 	data.phi_1 = atan2(data.x_k - data.x_h, data.y_h - data.y_k);   %Thigh
 	data.phi_2 = atan2(data.x_a - data.x_k, data.y_k - data.y_a);   %Shank
     
-    %=================================NM====================================
-	% joint angles and moments and power output
-	data.phi_k = d(:,4)*pi/180;				% convert to ankle angle in rad, positive for dorsiflexion
-	data.M_k = -d(:,19)*data.mass;				% convert to Nm, positive for dorsiflexion
-    %data.P_a = d(:,22);                         % power data for ankle
     
-    % Joint angular velocities from manual differentiation
+	% joint angles and moments and power output for the ankle
+	data.phi_a = d(:,4)*pi/180;				    % convert to ankle angle in rad, positive for dorsiflexion
+	data.M_a = -d(:,19)*data.mass;				% convert to Nm, positive for dorsiflexion
+    data.P_a = d(:,22)*data.mass;               % power data for ankle, converted to Watts
+    
+    
+    
+    % Joint angular velocities from manual calculation
     nsamples = size(d,1);
     omega = NaN(nsamples,1);
     for i=2:nsamples-1                         % Loop starts at 2 becuase angle analysis does not start at 0
-        omega(i) = (data.phi_k(i+1) - data.phi_k(i-1))...
+        omega(i) = (data.phi_a(i+1) - data.phi_a(i-1))...
                /(data.t(i+1) - data.t(i-1));
     end
-    data.P_a = omega .* data.M_k;
+    data.P_a = omega .* data.M_a;
     plot(data.t_perc,data.P_a)
-    keyboard
-	%=================================NM====================================
 
+end
+
+
+
+% If the motek data is chosen to be used
+if (Motek)
+    % Use the Motek data instead of the Excel data
+    motek = load('T017_S12');
+    
+    % Rename the motek structure variable to 'data'. The purupse is so we have less code to modify
+    % The apostrophie is to convert the motek data's row vectors into column vectors
+    data = motek;
+    data.phi_a      = motek.Right_Ankle_PlantarFlexion_Angle_Mean';    % Ankle Angle
+    data.M_a        = motek.Right_Ankle_PlantarFlexion_Moment_Mean';   % Ankle Moment
+    data.omega_a    = motek.Right_Ankle_PlantarFlexion_Rate_Mean';     % Ankle angular velocity
+    data.t_perc     = motek.percent_gait_cycle';
+    data.t          = (motek.mean_cycle_duration*(0:99)/100)';
+    keyboard
+    % Error checking the time data
+    if (data.t_perc(1) ~= 0)
+		error('Time(%) does not start at zero');
+	elseif (data.t_perc(end) == 100)
+		error('Time(%) ends at 100');
+	elseif (std(diff(data.t_perc)) > 0.001)
+		error('Time(%) is not equally spaced.');
+	end
+	data.cycle = max(data.t) + data.t(end) - data.t(end-1);
+    
+    % Multiplying angular velocity and moment to get power. 
+    % The function 'times' is a element-by-element multiplication function for matrices
+    data.P_a        = times(data.M_a, data.omega_a);                  %Ankle power
+    plot(data.t_perc,data.P_a)
+
+    %keyboard
+end
 
 end
