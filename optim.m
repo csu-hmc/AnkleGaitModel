@@ -9,7 +9,7 @@ function [result] = optim(problem);
 	tic
 	
 	% the following were taken out of optimsettings, because they do not need to be user modifiable
-	checkderivatives 		= 0;			% check the derivatives (1) or not (0)
+	checkderivatives 		= 1;			% check the derivatives (1) or not (0)
 	modifyinitialguess		= 'none';		% gaitdata: phi and M in initial guess are replaced by gait data
 	FeasibilityTolerance 	= 1e-5;         
 	OptimalityTolerance 	= 1e-4;
@@ -51,6 +51,7 @@ function [result] = optim(problem);
 	model.B2 = problem.B2;
 	model.datafile = char(gaitdata(1,1));
 	model.movement = char(gaitdata(1,2));
+    model.C  = problem.C;                           % Coefficient for parallel accumulator
 
 	
 	% load and store gait data
@@ -99,7 +100,7 @@ function [result] = optim(problem);
 	% collocation grid and unknowns
 	Nvarpernode = 8;			% number of unknowns per node: u1,u2,s,v1,v2,phi,M, u3  (NM-added u3 to variables per node)
 	model.Nconpernode = 4;		% number of constraint equations per node
-	model.Jnnzpernode = 19;		% nonzero Jacobian elements per node
+    model.Jnnzpernode = 19;		% nonzero Jacobian elements per node
 	model.Nvar = model.N * Nvarpernode;			% total number of unknowns
 	model.Ncon = model.N * model.Nconpernode;			% total number of constraints
 	model.Nvarpernode = Nvarpernode;
@@ -164,7 +165,7 @@ function [result] = optim(problem);
 	U(model.ik) = U_k;
 	L(model.iP0) = 0;				% should be zero to avoid leakage
 	U(model.iP0) = 0;				% should be zero to avoid leakage
-    keyboard
+    %keyboard
 	if problem.prescribe_kinematics		% constrain kinematics to be equal to gait data
 		L(model.iphi) = model.gait.phi;
 		U(model.iphi) = model.gait.phi;
@@ -203,7 +204,7 @@ function [result] = optim(problem);
 		X0 = [X0 ; P0 ; k];
 
 	end
-keyboard
+%keyboard
 	if numel(strfind(modifyinitialguess,'gaitdata')) > 0
 		% replace the phi and M unknowns with the corresponding gait data
 		X0(model.iphi) = model.gait.phi;
@@ -245,7 +246,7 @@ keyboard
 			hess_num(:,i) = (objgrad(X) - grad)/hh; 
 			X(i) = Xisave;
 		end
-		
+		keyboard
 		% find the max difference in constraint jacobian and objective gradient
 		[maxerr,irow] = max(abs(cjac-cjac_num));
 		[maxerr,icol] = max(maxerr);
@@ -269,7 +270,7 @@ keyboard
 		model.FDvar = 0;
 		
 	end
-
+keyboard
 	% report something about the initial guess, unless we're not even optimizing
 	model.FDvar = 1;
 	if ~strcmp(solver,'none')
@@ -351,8 +352,8 @@ keyboard
 	result.RMSmom = 		sqrt( mean( (X(model.iM)   - model.gait.M).^2   ) );
 	result.costfun = objfun(X);
 	result.k = X(end);
-	save('result.mat','result');
-	disp('Result of optimization is saved in result.mat.');
+	save('result1.mat','result');
+	disp('Result of optimization is saved in result1.mat.');
 
 	% display the results
 	report(X,1);
@@ -458,6 +459,7 @@ function [c] = confun(X)
 	h = model.h;
 	iP0 = model.iP0;
 	ik = model.ik;
+    C = model.C;
 	
 	c = zeros(model.Ncon,1);
 	irow = 1;
@@ -481,9 +483,9 @@ function [c] = confun(X)
 		% u1^2 * C1max * (k s + M G - B1 v1) - v1 * |v1| = 0
 		c(irow+1) = x1(1)^2*model.C1maxsquared * (X(ik) * x1(3) + x1(7) * model.G - model.B1 * x1(4) ) - x1(4)*abs(x1(4));
 		
-		% dphi/dt - G*(v1 + v2) = 0
-		c(irow+2) = (x2(6) - x1(6))/h - model.G * (x1(4)+x2(4)+x1(5)+x2(5))/2.0;
-		
+		% dphi/dt - G*(v1 + v2) - G*dM/dt*c = 0
+		c(irow+2) = (x2(6)-x1(6))/h - model.G*(x1(4)+x2(4) + x1(5)+x2(5))/2.0;% - model.G * model.C * (x1(7)+x2(7))/h;
+        
 		% u2^2 * C2max * (P0 + M * G - B2 * v2) - v2 * |v2|  = 0
 		c(irow+3) = x1(2)^2 * model.C2maxsquared * (X(model.iP0) + x1(7) * model.G - model.B2 * x1(5) ) - x1(5)*abs(x1(5)); 
 				
@@ -539,8 +541,8 @@ function [J] = conjac(X)
 		J(irow,ix1(4)) = 0.5;
 		J(irow,ix2(3)) = 1/h;
 		J(irow,ix2(4)) = 0.5;
-        J(irow,ix2(8)) = 0.5;
-        J(irow,ix1(8)) = 0.5;
+        J(irow,ix2(8)) = -1/h; %0.5
+        J(irow,ix1(8)) = 1/h; %0.5;
 		
 		% u1^2 * C1max * (k s + M G - B1 v1) - v1 * |v1| = 0
 		% c(irow+1) = x1(1)^2*model.C1max * (X(ik) * x1(3) + x1(7) * model.G - model.B1 * x1(4) ) - x1(4)*abs(x1(4));
@@ -550,14 +552,16 @@ function [J] = conjac(X)
 		J(irow+1,ix1(7)) = x1(1)^2*model.C1maxsquared * model.G;
 		J(irow+1,ik) = x1(1)^2*model.C1maxsquared * x1(3);
 		
-		% dphi/dt - G*(v1 + v2) = 0
-		% c(irow+2) = (x2(6) - x1(6))/h - model.G * (x1(4)+x2(4)+x1(5)+x2(5))/2.0;
+        % dphi/dt - G*(v1 + v2) - G*dM/dt*c = 0
+		% c(irow+2) = (x2(6)-x1(6))/h - model.G*(x1(4)+x2(4) + x1(5)+x2(5))/2.0 - model.G*C*(x1(7)+x2(7))/h;
 		J(irow+2,ix1(4)) = -model.G/2.0;
 		J(irow+2,ix1(5)) = -model.G/2.0;
 		J(irow+2,ix1(6)) = -1/h;
+%         J(irow+2,ix1(7)) = -1/h;
 		J(irow+2,ix2(4)) = -model.G/2.0;
 		J(irow+2,ix2(5)) = -model.G/2.0;
 		J(irow+2,ix2(6)) = 1/h;
+%         J(irow+2,ix2(7)) = 1/h;
 		
 		% u2^2 * C2max * (P0 + M * G - B2 * v2) - v2 * |v2|  = 0
 		%c(irow+3) = x1(2)^2 * model.C2max * (P0 + x1(7) * model.G - model.B2 * x1(5) ) - x1(5)*abs(x1(5);
