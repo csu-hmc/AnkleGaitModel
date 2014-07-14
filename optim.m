@@ -34,6 +34,7 @@ function [result] = optim(problem);
 	L_u2 = problem.L_u2;	U_u2 = problem.U_u2;    % valve 2 control
     L_u3 = problem.L_u3;    U_u3 = problem.U_u3;    %(NM-added u3 to problem structure)
 	L_k = problem.L_k;		U_k = problem.U_k;      % spring stiffness in MPa/ml
+	L_CPA = problem.L_CPA;	U_CPA = problem.U_CPA;    % compliance of second accumulator (ml/MPa)
 	model.w1 		= problem.w1;                   % weight for angle tracking term
 	model.w2 		= problem.w2;                   % weight for moment tracking term
 	model.w3 		= problem.w3;                   % weight for valve 1 control accelerations
@@ -51,8 +52,6 @@ function [result] = optim(problem);
 	model.B2 = problem.B2;
 	model.datafile = char(gaitdata(1,1));
 	model.movement = char(gaitdata(1,2));
-    model.C  = problem.C;                           % Coefficient for parallel accumulator
-
 	
 	% load and store gait data
 	ndata = size(gaitdata,1);
@@ -100,7 +99,6 @@ function [result] = optim(problem);
 	% collocation grid and unknowns
 	Nvarpernode = 8;			% number of unknowns per node: u1,u2,s,v1,v2,phi,M, u3  (NM-added u3 to variables per node)
 	model.Nconpernode = 4;		% number of constraint equations per node
-    model.Jnnzpernode = 19;		% nonzero Jacobian elements per node
 	model.Nvar = model.N * Nvarpernode;			% total number of unknowns
 	model.Ncon = model.N * model.Nconpernode;			% total number of constraints
 	model.Nvarpernode = Nvarpernode;
@@ -128,7 +126,7 @@ function [result] = optim(problem);
 	model.iu = [iu1(:,2) ; iu2(:,2) ; iu3(:,2)];		% simply a list of all controls within X (NM)
 	model.iphi = iphi;
 	model.iM = iM;
-	model.iP0 = model.Nvar+1; model.Nvar = model.Nvar+1;
+	model.iCPA = model.Nvar+1; model.Nvar = model.Nvar+1;
 	model.ik = model.Nvar+1; model.Nvar = model.Nvar+1;
 	
 	% precalculate the Hessian of objective function (since it is constant for our least squares objective)
@@ -163,8 +161,8 @@ function [result] = optim(problem);
 	U = [repmat(Unode,N,1)];
 	L(model.ik) = L_k;
 	U(model.ik) = U_k;
-	L(model.iP0) = 0;				% should be zero to avoid leakage
-	U(model.iP0) = 0;				% should be zero to avoid leakage
+	L(model.iCPA) = L_CPA;				
+	U(model.iCPA) = U_CPA;				
     %keyboard
 	if problem.prescribe_kinematics		% constrain kinematics to be equal to gait data
 		L(model.iphi) = model.gait.phi;
@@ -204,7 +202,7 @@ function [result] = optim(problem);
 		X0 = [X0 ; P0 ; k];
 
 	end
-%keyboard
+
 	if numel(strfind(modifyinitialguess,'gaitdata')) > 0
 		% replace the phi and M unknowns with the corresponding gait data
 		X0(model.iphi) = model.gait.phi;
@@ -218,8 +216,9 @@ function [result] = optim(problem);
 	
 	% find the Jacobian pattern
 	X = L + (U-L).*rand(size(L));		% a random vector of unknowns
+    model.Jnnz = 50*model.N;            % first guess of Jacobian size
 	J = conjac(X);
-	model.Jnnz = nnz(J);
+	model.Jnnz = nnz(J);                % actual Jacobian size
 	fprintf('Jacobian sparsity: %d nonzero elements out of %d (%5.3f%%).\n', ...
 		model.Jnnz, model.Ncon*model.Nvar, 100*model.Jnnz/(model.Ncon*model.Nvar));
 	model.Jpattern = double(J~=0);
@@ -246,7 +245,7 @@ function [result] = optim(problem);
 			hess_num(:,i) = (objgrad(X) - grad)/hh; 
 			X(i) = Xisave;
 		end
-		keyboard
+
 		% find the max difference in constraint jacobian and objective gradient
 		[maxerr,irow] = max(abs(cjac-cjac_num));
 		[maxerr,icol] = max(maxerr);
@@ -270,7 +269,7 @@ function [result] = optim(problem);
 		model.FDvar = 0;
 		
 	end
-keyboard
+
 	% report something about the initial guess, unless we're not even optimizing
 	model.FDvar = 1;
 	if ~strcmp(solver,'none')
@@ -360,8 +359,8 @@ keyboard
 	
 	% display model parameters
 	fprintf('Optimal parameter values:\n');
-	fprintf('    k  = %8.4f MPa/ml    (stiffness of spring loaded reservoir)\n', X(model.ik));
-	fprintf('    P0 = %8.4f MPa       (pressure at constant pressure reservoir)\n', X(model.iP0));
+	fprintf('    k   = %8.4f MPa/ml       (stiffness of spring loaded reservoir)\n', X(model.ik));
+	fprintf('    CPA = %8.4f ml/MPa       (compliance of second accumulator)\n', X(model.iCPA));
 end
 %===============================================================================
 function report(X, powerreport)
@@ -383,8 +382,7 @@ function report(X, powerreport)
 	u2 =  [u2 ; u2(1)]';
     u3 =  [u3 ; u3(1)]';    %(NM)
 	P = -M * model.G; %Pressure in actuator
-	P0 = X(model.iP0);
-    ppump = u3.*P1;
+	ppump = u3.*P1;
 	gaitphi = model.gait.phi*180/pi;
 	gaitM = model.gait.M;
     gaitP = (model.gait.P);    %(NM)
@@ -439,7 +437,7 @@ function report(X, powerreport)
 		figure(2)
 		pspring = P1.*v1;
 		pvalve1 = (P-P1).*v1;
-		pvalve2 = (P-P0).*v2;
+		pvalve2 = P.*v2;
         ppump = u3.*P1;
 		ptotal = pspring + pvalve1 + pvalve2 + ppump;
 		plot(tperc,ptotal,tperc,pspring,tperc,pvalve1,tperc,pvalve2,tperc,ppump);
@@ -457,10 +455,9 @@ function [c] = confun(X)
 	global model
 	
 	h = model.h;
-	iP0 = model.iP0;
+	iCPA = model.iCPA;
 	ik = model.ik;
-    C = model.C;
-	
+ 	
 	c = zeros(model.Ncon,1);
 	irow = 1;
 	ix1 = 1:model.Nvarpernode;
@@ -483,11 +480,11 @@ function [c] = confun(X)
 		% u1^2 * C1max * (k s + M G - B1 v1) - v1 * |v1| = 0
 		c(irow+1) = x1(1)^2*model.C1maxsquared * (X(ik) * x1(3) + x1(7) * model.G - model.B1 * x1(4) ) - x1(4)*abs(x1(4));
 		
-		% dphi/dt - G*(v1 + v2) - G*dM/dt*c = 0
-		c(irow+2) = (x2(6)-x1(6))/h - model.G*(x1(4)+x2(4) + x1(5)+x2(5))/2.0;% - model.G * model.C * (x1(7)+x2(7))/h;
+		% dphi/dt - G*(v1 + v2) - G^2*dM/dt*c = 0
+		c(irow+2) = (x2(6)-x1(6))/h - model.G*(x1(4)+x2(4) + x1(5)+x2(5))/2.0 - model.G^2 * X(iCPA) * (x2(7)-x1(7))/h;
         
-		% u2^2 * C2max * (P0 + M * G - B2 * v2) - v2 * |v2|  = 0
-		c(irow+3) = x1(2)^2 * model.C2maxsquared * (X(model.iP0) + x1(7) * model.G - model.B2 * x1(5) ) - x1(5)*abs(x1(5)); 
+		% u2^2 * C2max * (M * G - B2 * v2) - v2 * |v2|  = 0
+		c(irow+3) = x1(2)^2 * model.C2maxsquared * (x1(7) * model.G - model.B2 * x1(5) ) - x1(5)*abs(x1(5)); 
 				
 		%  advance ix1 and irow to next node
 		ix1 = ix1 + model.Nvarpernode;
@@ -516,19 +513,19 @@ function [J] = conjac(X)
 	global model
 
 	h = model.h;		% time step size
-	iP0 = model.iP0;
+	iCPA = model.iCPA;
 	ik = model.ik;
 
-	J = spalloc(model.Ncon,model.Nvar, model.Jnnzpernode*model.N);		% 19 nonzeros per node
+	J = spalloc(model.Ncon,model.Nvar, model.Jnnz);		% allocate memory space
 	irow = 1;
 	ix1 = 1:model.Nvarpernode;
 	for i=1:model.N
 		% extract variables from successive nodes
 		x1 = X(ix1);
 		if (i < model.N)
-			ix2 = ix1 + model.Nvarpernode;
+			ix2 = ix1 + model.Nvarpernode;      % use the x variables from the node after ix1
 		else
-			ix2 = 1:model.Nvarpernode;
+			ix2 = 1:model.Nvarpernode;          % use the x variables from node 1
 		end
 		x2 = X(ix2);
 		
@@ -541,8 +538,8 @@ function [J] = conjac(X)
 		J(irow,ix1(4)) = 0.5;
 		J(irow,ix2(3)) = 1/h;
 		J(irow,ix2(4)) = 0.5;
-        J(irow,ix2(8)) = -1/h; %0.5
-        J(irow,ix1(8)) = 1/h; %0.5;
+        J(irow,ix2(8)) = 0.5;
+        J(irow,ix1(8)) = 0.5;
 		
 		% u1^2 * C1max * (k s + M G - B1 v1) - v1 * |v1| = 0
 		% c(irow+1) = x1(1)^2*model.C1max * (X(ik) * x1(3) + x1(7) * model.G - model.B1 * x1(4) ) - x1(4)*abs(x1(4));
@@ -552,28 +549,30 @@ function [J] = conjac(X)
 		J(irow+1,ix1(7)) = x1(1)^2*model.C1maxsquared * model.G;
 		J(irow+1,ik) = x1(1)^2*model.C1maxsquared * x1(3);
 		
-        % dphi/dt - G*(v1 + v2) - G*dM/dt*c = 0
-		% c(irow+2) = (x2(6)-x1(6))/h - model.G*(x1(4)+x2(4) + x1(5)+x2(5))/2.0 - model.G*C*(x1(7)+x2(7))/h;
+        % dphi/dt - G*(v1 + v2) - G^2*dM/dt*c = 0
+		% c(irow+2) = (x2(6)-x1(6))/h - model.G*(x1(4)+x2(4) + x1(5)+x2(5))/2.0 - model.G^2 * X(iCPA) * (x2(7)-x1(7))/h;
 		J(irow+2,ix1(4)) = -model.G/2.0;
 		J(irow+2,ix1(5)) = -model.G/2.0;
 		J(irow+2,ix1(6)) = -1/h;
-%         J(irow+2,ix1(7)) = -1/h;
+        J(irow+2,ix1(7)) = -model.G^2*X(iCPA)/h;
 		J(irow+2,ix2(4)) = -model.G/2.0;
 		J(irow+2,ix2(5)) = -model.G/2.0;
 		J(irow+2,ix2(6)) = 1/h;
-%         J(irow+2,ix2(7)) = 1/h;
+        J(irow+2,ix2(7)) = model.G^2*X(iCPA)/h;
+        J(irow+2,iCPA) = - model.G^2 * (x2(7)-x1(7))/h;
 		
 		% u2^2 * C2max * (P0 + M * G - B2 * v2) - v2 * |v2|  = 0
 		%c(irow+3) = x1(2)^2 * model.C2max * (P0 + x1(7) * model.G - model.B2 * x1(5) ) - x1(5)*abs(x1(5);
-		J(irow+3,ix1(2)) = 2*x1(2)*model.C2maxsquared * (X(iP0) + x1(7) * model.G - model.B2 * x1(5) );
+		J(irow+3,ix1(2)) = 2*x1(2)*model.C2maxsquared * (x1(7) * model.G - model.B2 * x1(5) );
 		J(irow+3,ix1(5)) = -x1(2)^2 * model.C2maxsquared * model.B2 - 2*abs(x1(5));
 		J(irow+3,ix1(7)) = x1(2)^2 * model.C2maxsquared * model.G;
-		J(irow+3,iP0)    = x1(2)^2*model.C2maxsquared;
 
 		%  advance ix1 and irow to next node
 		ix1 = ix1 + model.Nvarpernode;
 		irow = irow + model.Nconpernode;
-	end
+        
+       
+    end
 end
 %====================================================================
 function [f] = objfun(X, Prob);
