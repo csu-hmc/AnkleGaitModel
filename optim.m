@@ -1,3 +1,4 @@
+
 function [result] = optim(problem);
 
 % Solve the optimal control problem for the rotary hydraulic knee
@@ -30,16 +31,16 @@ function [result] = optim(problem);
 	end
 	gaitdata 		= problem.gaitdata;
 	initialguess 	= problem.initialguess;
-	L_u1 = problem.L_u1;	U_u1 = problem.U_u1;    % uncomment this line to keep valve 1 closed
-	L_u2 = problem.L_u2;	U_u2 = problem.U_u2;    % valve 2 control
-    L_u3 = problem.L_u3;    U_u3 = problem.U_u3;    %(NM-added u3 to problem structure)
+	L_u1 = problem.L_u2;	U_u2 = problem.U_u1;    % Lower/Upper bounds for pump signal
+	L_u2 = problem.L_u3;	U_u3 = problem.U_u2;    % Lower/Upper bounds for valve U2
+    L_u3 = problem.L_u1;    U_u1 = problem.U_u3;    % Lower/Upper bounds for valve U3
 	L_k = problem.L_k;		U_k = problem.U_k;      % spring stiffness in MPa/ml
-	L_CPA = problem.L_CPA;	U_CPA = problem.U_CPA;    % compliance of second accumulator (ml/MPa)
+	L_CPA = problem.L_CPA;	U_CPA = problem.U_CPA;  % compliance of second accumulator (ml/MPa)
 	model.w1 		= problem.w1;                   % weight for angle tracking term
 	model.w2 		= problem.w2;                   % weight for moment tracking term
 	model.w3 		= problem.w3;                   % weight for valve 1 control accelerations
 	model.w4 		= problem.w4;                   % weight for valve 2 control accelerations
-    model.w5        = problem.w5;                   % weight for the pump controller (NM)
+    model.w5        = problem.w5;                   % weight for the pump controller
 	model.wreg 		= problem.wreg;                 % weight for regularization (smoothness) term
 	model.Wdisc 	= problem.Wdisc;                % weighting to encourage discrete control levels
 	model.Ndisc 	= problem.Ndisc;                % number of discrete control levels
@@ -97,16 +98,16 @@ function [result] = optim(problem);
     
 	
 	% collocation grid and unknowns
-	Nvarpernode = 8;			% number of unknowns per node: u1,u2,s,v1,v2,phi,M, u3  (NM-added u3 to variables per node)
+	Nvarpernode = 8;			% number of unknowns per node: u2,u3,s,v1,v2,phi,M, u1
 	model.Nconpernode = 4;		% number of constraint equations per node
 	model.Nvar = model.N * Nvarpernode;			% total number of unknowns
 	model.Ncon = model.N * model.Nconpernode;			% total number of constraints
 	model.Nvarpernode = Nvarpernode;
     
 	% precalculate some indices for X array, to speed up the calculations
-	iu1 = zeros(N,3);		% index to u1 control at three successive nodes
-	iu2 = zeros(N,3);		% index to u2 control at three successive nodes
-    iu3 = zeros(N,3);       % index to u3 control at three successive nodes  (NM-line added for u3 index)
+	iu1 = zeros(N,3);		% index to u1 control at three successive nodes (pump)
+	iu2 = zeros(N,3);		% index to u2 control at three successive nodes (valve U2)
+    iu3 = zeros(N,3);       % index to u3 control at three successive nodes (valve U3)
 	for i=1:N
 		if (i == N)
 			iu1(i,:) = [N-1 0 1]*Nvarpernode + 1;	% u1 is the first variable		
@@ -122,12 +123,12 @@ function [result] = optim(problem);
 	iphi = (0:N-1)*Nvarpernode + 6;			% phi is 6th variable
 	model.iu1 = iu1;
 	model.iu2 = iu2;
-    model.iu3 = iu3;                         %(NM)
-	model.iu = [iu1(:,2) ; iu2(:,2) ; iu3(:,2)];		% simply a list of all controls within X (NM)
+    model.iu3 = iu3;                        
+	model.iu = [iu1(:,2) ; iu2(:,2) ; iu3(:,2)];		% simply a list of all controls within X
 	model.iphi = iphi;
 	model.iM = iM;
-	model.iCPA = model.Nvar+1; model.Nvar = model.Nvar+1;
-	model.ik = model.Nvar+1; model.Nvar = model.Nvar+1;
+	model.iCPA = model.Nvar+1;      model.Nvar = model.Nvar+1;
+	model.ik =   model.Nvar+1;      model.Nvar = model.Nvar+1;
 	
 	% precalculate the Hessian of objective function (since it is constant for our least squares objective)
 	Htrack = spalloc(model.Nvar,model.Nvar,1);
@@ -137,16 +138,16 @@ function [result] = optim(problem);
 	Htrack(iphi, iphi) = model.w1 * 2 * spdiags(e,0,N,N)/model.gait.phisd^2/N;
 	% term 2: moment tracking
 	Htrack(iM, iM) = model.w2 * 2 * spdiags(e,0,N,N)/model.gait.Msd^2/N;
-	% term 3: acceleration of valve 1 control
+	% term 3: acceleration of valve u2 control
 	% general pattern is Hu for finite difference accelerations with periodicity
 	Hu = spdiags([2*e -8*e 12*e -8*e 2*e],-2:2,N,N)/N/h^2;
 	Hu(1,N-1:N) = [2 -8]/N/h^2;
 	Hu(2,N) = 2/N/h^2;
 	Hu(N-1:N,1) = [2 -8]'/N/h^2;
 	Hu(N,2) = 2/N/h^2;
-	Hcontrol(iu1(:,1),iu1(:,1)) = model.w3*Hu;
+	Hcontrol(iu2(:,1),iu2(:,1)) = model.w3*Hu;
 	% term 4: acceleration of valve 2 control
-	Hcontrol(iu2(:,1),iu2(:,1)) = model.w4*Hu;
+	Hcontrol(iu3(:,1),iu3(:,1)) = model.w4*Hu;
 
 	model.Htrack = Htrack;
 	model.Hcontrol = Hcontrol;
@@ -155,15 +156,15 @@ function [result] = optim(problem);
 	fprintf('Hessian sparsity:  %d nonzero elements out of %d (%8.3f %%)\n', Hnnz, model.Nvar^2, Hnnz/model.Nvar^2);
 		
 	% set lower and upper bounds
-	Lnode = [L_u1	L_u2 -100 -100 -100 -150*pi/180 -350  L_u3]';  % (NM-included 8th variable u3 for lower bound)        
-	Unode = [U_u1	U_u2  100  100  100  150*pi/180  350  U_u3]';  % (NM-included 8th variable u3 for upper bound)
+	Lnode = [L_u1	L_u2 -100 -100 -100 -150*pi/180 -350  L_u3]';          
+	Unode = [U_u1	U_u2  100  100  100  150*pi/180  350  U_u3]';  
 	L = [repmat(Lnode,N,1)];
 	U = [repmat(Unode,N,1)];
 	L(model.ik) = L_k;
 	U(model.ik) = U_k;
 	L(model.iCPA) = L_CPA;				
 	U(model.iCPA) = U_CPA;				
-    %keyboard
+    
 	if problem.prescribe_kinematics		% constrain kinematics to be equal to gait data
 		L(model.iphi) = model.gait.phi;
 		U(model.iphi) = model.gait.phi;
@@ -184,12 +185,11 @@ function [result] = optim(problem);
 		X0 = result.X;
 		
 		% extract the time series of all 8 variables, and k and P0
-        %This also includes the variable u3 to represent the motor
-		N0 = (size(X0,1)-2)/8;              %(NM-increased denomonator to 8 to accomodate u3)
+		N0 = (size(X0,1)-2)/8;             
         if (N0 ~= round(N0))
 			error('N0 is not a whole number');
 		end
-		x0 = reshape(X0(1:end-2),8, N0)';  %(NM-increased column size to 8)
+		x0 = reshape(X0(1:end-2),8, N0)';
 		P0 = X0(end-1);
 		k = X0(end);
 		
@@ -198,7 +198,7 @@ function [result] = optim(problem);
 		
 		% interpolate to the current number of nodes
 		x0 = interp1((0:N0)'/N0,x0,(0:N-1)'/N,'linear','extrap');
-		X0 = reshape(x0',8*N,1);    %(NM-Changed to 8 for 8th variable)
+		X0 = reshape(x0',8*N,1);    
 		X0 = [X0 ; P0 ; k];
 
 	end
@@ -249,7 +249,9 @@ function [result] = optim(problem);
 		% find the max difference in constraint jacobian and objective gradient
 		[maxerr,irow] = max(abs(cjac-cjac_num));
 		[maxerr,icol] = max(maxerr);
-		fprintf('Max.error in constraint jacobian: %8.5f at %d %d\n', maxerr, irow(icol), icol);
+        fprintf('Max.error in constraint jacobian: %8.5f at %d %d\n', maxerr, irow(icol), icol);
+        fprintf('    Conjac result: %f\n', full(cjac(irow(icol), icol)));
+        fprintf('    Fin Diff appr: %f\n', full(cjac_num(irow(icol), icol)));
 		d = 2*abs(cjac - cjac_num)./(cjac + cjac_num);		% relative error
 		fprintf('Max. relative error in constraint jacobian: %8.5f\n', max(max(d)));
 		[maxerr,irow] = max(abs(grad_num-grad));
@@ -338,29 +340,83 @@ function [result] = optim(problem);
 		disp('Solver name not recognized, reproducing initial guess.');
 		X = X0;
 		info = 0;
-	end
+    end
 	
-	disp(['Total time used: ' num2str(cputime-starttime) ' seconds.']);
-	
-	% save optimization result on file
-	clear Result result 
-	result.info = info;
-	result.X = X;
-	result.N = N;			% in case it was reduced to number of data samples
-	result.RMSang = 180/pi*sqrt( mean( (X(model.iphi) - model.gait.phi).^2 ) );
-	result.RMSmom = 		sqrt( mean( (X(model.iM)   - model.gait.M).^2   ) );
-	result.costfun = objfun(X);
-	result.k = X(end);
-	save('result1.mat','result');
-	disp('Result of optimization is saved in result1.mat.');
+    
+    % display the results
+    disp(['Total time used: ' num2str(cputime-starttime) ' seconds.']);
+    disp('')
+    report(X,1);
+    disp('')
+    % display model parameters
+    fprintf('Optimal parameter values:\n');
+    fprintf('    k   = %8.4f MPa/ml       (stiffness of spring loaded reservoir)\n', X(model.ik));
+    fprintf('    CPA = %8.4f ml/MPa       (compliance of second accumulator)\n', X(model.iCPA));
+    disp('')
+    
+    % If using discritization with pump for continuous flow, print the value of this signal
+    if model.Wdisc ~0
+    fprintf('    U1  = %8.4f ml/sec       (flow from the pump)\n', X(model.iu1));
+    end
 
-	% display the results
-	report(X,1);
-	
-	% display model parameters
-	fprintf('Optimal parameter values:\n');
-	fprintf('    k   = %8.4f MPa/ml       (stiffness of spring loaded reservoir)\n', X(model.ik));
-	fprintf('    CPA = %8.4f ml/MPa       (compliance of second accumulator)\n', X(model.iCPA));
+%     % Choosing to save the results on file
+%     saveresult = input('Would you like to save the results? (y/n):   ','s');
+%     if strcmpi(saveresult, 'y');
+%         file = input('Enter filename:  ','s');
+%         disp('')
+%         clear Result result 
+%         result.info = info;
+%         result.X = X;
+%         result.N = N;			% in case it was reduced to number of data samples
+%         result.RMSang = 180/pi*sqrt( mean( (X(model.iphi) - model.gait.phi).^2 ) );
+%         result.RMSmom = sqrt( mean( (X(model.iM)   - model.gait.M).^2   ) );
+%         result.costfun = objfun(X);
+%         result.k = X(end);
+%         result.w5 = model.w5;
+%         save(file,'result');
+%         disp('')
+%         disp('Result of optimization is saved')
+%         disp('Please change initial guess in readgaitdata.m to optimize these results')
+%     elseif strcmpi(saveresult, 'n');
+%         return
+%     elseif isempty(saveresult)
+%         disp('Saving results...')
+%         disp('')
+%         clear Result result 
+%         result.info = info;
+%         result.X = X;
+%         result.N = N;			% in case it was reduced to number of data samples
+%         result.RMSang = 180/pi*sqrt( mean( (X(model.iphi) - model.gait.phi).^2 ) );
+%         result.RMSmom = 		sqrt( mean( (X(model.iM)   - model.gait.M).^2   ) );
+%         result.costfun = objfun(X);
+%         result.k = X(end);
+%         result.w5 = model.w5;
+%         save('resultX.mat','result');
+%         disp('')
+%         disp('Result of optimization is saved in resultX.mat.')
+%     else
+%         return
+%     end
+
+    
+    % Autosaving instead of prompt save. This will save file anyway
+    disp('Saving results...')
+    disp('')
+    clear Result result 
+    result.info = info;
+    result.X = X;
+    result.N = N;			% in case it was reduced to number of data samples
+    result.RMSang = 180/pi*sqrt( mean( (X(model.iphi) - model.gait.phi).^2 ) );
+    result.RMSmom = 		sqrt( mean( (X(model.iM)   - model.gait.M).^2   ) );
+    result.costfun = objfun(X);
+    result.k = X(end);
+    result.w5 = model.w5;
+    save('resultX.mat','result');
+    disp('')
+    disp('Result of optimization is saved in resultX.mat.')
+    
+    
+    
 end
 %===============================================================================
 function report(X, powerreport)
@@ -371,7 +427,7 @@ function report(X, powerreport)
 	M =   X(model.iM);
 	u1 =  X(model.iu1(:,2));
 	u2 =  X(model.iu2(:,2));
-    u3 =  X(model.iu3(:,2));    % (NM-line used for the power report of third flow)
+    u3 =  X(model.iu3(:,2));    
 	P1 = X(model.ik) * [X(3:model.Nvarpernode:end) ; X(3)]'; % Pressure in the accumulator
 	v1 = [X(4:model.Nvarpernode:end) ; X(4)]';
 	v2 = [X(5:model.Nvarpernode:end) ; X(5)]';
@@ -380,15 +436,15 @@ function report(X, powerreport)
 	M =   [M ; M(1)]';
 	u1 =  [u1 ; u1(1)]';
 	u2 =  [u2 ; u2(1)]';
-    u3 =  [u3 ; u3(1)]';    %(NM)
+    u3 =  [u3 ; u3(1)]';    
 	P = -M * model.G; %Pressure in actuator
-	ppump = u3.*P1;
+	ppump = u1.*P1;
 	gaitphi = model.gait.phi*180/pi;
 	gaitM = model.gait.M;
-    gaitP = (model.gait.P);    %(NM)
+    gaitP = (model.gait.P);    
 	gaitphi = [gaitphi ; gaitphi(1)];
 	gaitM = [gaitM ; gaitM(1)];
-    gaitP = [gaitP ; gaitP(1)]; %(NM)
+    gaitP = [gaitP ; gaitP(1)];
 	figure(1);
 	clf;
 	
@@ -404,13 +460,13 @@ function report(X, powerreport)
 	xlabel('Time (% of cycle)');
 	
 	subplot(3,3,2)  
-	plot(tperc,u1);
-	ylabel('Valve 1 control (a.u.)');
+	plot(tperc,u2);
+	ylabel('Valve U2 control (a.u.)');
 	title(model.movement);
 	
 	subplot(3,3,5)  
-	plot(tperc,u2);
-	ylabel('Valve 2 control (a.u.)');
+	plot(tperc,u3);
+	ylabel('Valve U3 control (a.u.)');
 	xlabel('Time (% of cycle)');
 
 	subplot(3,3,3); 
@@ -420,10 +476,10 @@ function report(X, powerreport)
 	title(['N = ' num2str(model.N)]);
 
 	subplot(3,3,6); 
-	plot(tperc,v1,tperc,v2, tperc,u3);
+	plot(tperc,v1,tperc,v2, tperc,u1);
 	xlabel('Time (% of cycle)');
 	ylabel('flow (ml/s)');
-	legend('v1','v2','u3');
+	legend('v1','v2','U1');
     
     
     subplot(3,3,7); 
@@ -438,7 +494,7 @@ function report(X, powerreport)
 		pspring = P1.*v1;
 		pvalve1 = (P-P1).*v1;
 		pvalve2 = P.*v2;
-        ppump = u3.*P1;
+        ppump = u1.*P1;
 		ptotal = pspring + pvalve1 + pvalve2 + ppump;
 		plot(tperc,ptotal,tperc,pspring,tperc,pvalve1,tperc,pvalve2,tperc,ppump);
 		xlabel('Time (% of gait cycle');
@@ -474,17 +530,19 @@ function [c] = confun(X)
 		% generate the four constraints
 		% the eight variables are: u1,u2,s,v1,v2,phi,M,u3
 		
-		% ds/dt + v1 + u3 = 0:
-		c(irow) = (x2(3) - x1(3))/h  + (x1(4) + x2(4))/2.0  +  (x1(8) + x2(8))/2;   %(NM)
+		% ds/dt + v1 + u1 = 0:
+		c(irow) = (x2(3) - x1(3))/h  + (x1(4) + x2(4))/2.0  +  (x1(1) + x2(1))/2;   
 		
-		% u1^2 * C1max * (k s + M G - B1 v1) - v1 * |v1| = 0
-		c(irow+1) = x1(1)^2*model.C1maxsquared * (X(ik) * x1(3) + x1(7) * model.G - model.B1 * x1(4) ) - x1(4)*abs(x1(4));
+		% u2^2 * C1max * (k s + M G - B1 v1) - v1 * |v1| = 0
+		c(irow+1) = x1(2)^2*model.C1maxsquared * (X(ik) * x1(3) + x1(7) * model.G - model.B1 * x1(4) ) - x1(4)*abs(x1(4));
 		
-		% dphi/dt - G*(v1 + v2) - G^2*dM/dt*c = 0
+		% dphi/dt - G*(v1 + v2 - G*dM/dt*CPA) = 0
 		c(irow+2) = (x2(6)-x1(6))/h - model.G*(x1(4)+x2(4) + x1(5)+x2(5))/2.0 - model.G^2 * X(iCPA) * (x2(7)-x1(7))/h;
         
-		% u2^2 * C2max * (M * G - B2 * v2) - v2 * |v2|  = 0
-		c(irow+3) = x1(2)^2 * model.C2maxsquared * (x1(7) * model.G - model.B2 * x1(5) ) - x1(5)*abs(x1(5)); 
+		% u3^2 * C2max * (M * G - B2 * v2) - v2 * |v2|  = 0
+		c(irow+3) = x1(8)^2 * model.C2maxsquared * (x1(7) * model.G - model.B2 * x1(5) ) - x1(5)*abs(x1(5)); 
+        
+        
 				
 		%  advance ix1 and irow to next node
 		ix1 = ix1 + model.Nvarpernode;
@@ -498,17 +556,17 @@ function [c] = confun(X)
 	model.normc = norm(c);
 
 end
-%===========================================================================================
+%==========================================================================================
 function J = conjacSNOPT(X);
 	% returns constraint Jacobian matrix, for SNOPT
 	J = conjac(X,0);
 end
-%====================================================================
+%==========================================================================================
 function [Jstruct] = conjacstructure(X)
     global model
 	Jstruct = model.Jpattern;
 end
-%====================================================================
+%==========================================================================================
 function [J] = conjac(X)
 	global model
 
@@ -532,40 +590,42 @@ function [J] = conjac(X)
 		% generate the constraint derivatives
 		% the variables are: u1,u2,s,v1,v2,phi,M,u3
 		
-		% ds/dt + v1 + u3 = 0:
-		% c(irow) = (x2(3) - x1(3))/h  + (x1(4) + x2(4))/2.0  +  (x1(8) + x2(8))/2;
+		% ds/dt + v1 + u1 = 0:
+		% c(irow) = (x2(3) - x1(3))/h  + (x1(4) + x2(4))/2.0  +  (x1(1) + x2(1))/2;
 		J(irow,ix1(3)) = -1/h;
 		J(irow,ix1(4)) = 0.5;
+        J(irow,ix1(1)) = 0.5;
 		J(irow,ix2(3)) = 1/h;
 		J(irow,ix2(4)) = 0.5;
-        J(irow,ix2(8)) = 0.5;
-        J(irow,ix1(8)) = 0.5;
-		
-		% u1^2 * C1max * (k s + M G - B1 v1) - v1 * |v1| = 0
+        J(irow,ix2(1)) = 0.5;
+        
+        
+		% u2^2 * C1max * (k s + M G - B1 v1) - v1 * |v1| = 0
 		% c(irow+1) = x1(1)^2*model.C1max * (X(ik) * x1(3) + x1(7) * model.G - model.B1 * x1(4) ) - x1(4)*abs(x1(4));
-		J(irow+1,ix1(1)) = 2*x1(1)*model.C1maxsquared * (X(ik) * x1(3) + x1(7) * model.G - model.B1 * x1(4) );
-		J(irow+1,ix1(3)) = x1(1)^2*model.C1maxsquared * X(ik);
-		J(irow+1,ix1(4)) = -x1(1)^2*model.C1maxsquared * model.B1 - 2*abs(x1(4));
-		J(irow+1,ix1(7)) = x1(1)^2*model.C1maxsquared * model.G;
-		J(irow+1,ik) = x1(1)^2*model.C1maxsquared * x1(3);
+		J(irow+1,ix1(2)) = 2*x1(2)*model.C1maxsquared * (X(ik) * x1(3) + x1(7) * model.G - model.B1 * x1(4) );
+		J(irow+1,ix1(3)) = x1(2)^2*model.C1maxsquared * X(ik);
+		J(irow+1,ix1(4)) = -x1(2)^2*model.C1maxsquared * model.B1 - 2*abs(x1(4));
+		J(irow+1,ix1(7)) = x1(2)^2*model.C1maxsquared * model.G;
+		J(irow+1,ik)     = x1(2)^2*model.C1maxsquared * x1(3);
 		
-        % dphi/dt - G*(v1 + v2) - G^2*dM/dt*c = 0
-		% c(irow+2) = (x2(6)-x1(6))/h - model.G*(x1(4)+x2(4) + x1(5)+x2(5))/2.0 - model.G^2 * X(iCPA) * (x2(7)-x1(7))/h;
+      
+        % dphi/dt - G*(v1 + v2 - G*dM/dt*CPA) = 0
+		%c(irow+2) = (x2(6)-x1(6))/h - model.G*(x1(4)+x2(4) + x1(5)+x2(5))/2.0 - model.G^2 * X(iCPA) * (x2(7)-x1(7))/h;  
 		J(irow+2,ix1(4)) = -model.G/2.0;
 		J(irow+2,ix1(5)) = -model.G/2.0;
 		J(irow+2,ix1(6)) = -1/h;
-        J(irow+2,ix1(7)) = -model.G^2*X(iCPA)/h;
+        J(irow+2,ix1(7)) = model.G^2*X(iCPA)/h;
 		J(irow+2,ix2(4)) = -model.G/2.0;
 		J(irow+2,ix2(5)) = -model.G/2.0;
 		J(irow+2,ix2(6)) = 1/h;
-        J(irow+2,ix2(7)) = model.G^2*X(iCPA)/h;
-        J(irow+2,iCPA) = - model.G^2 * (x2(7)-x1(7))/h;
+        J(irow+2,ix2(7)) = -model.G^2*X(iCPA)/h;
+        J(irow+2,iCPA)   = -model.G^2 * (x2(7)-x1(7))/h;
 		
-		% u2^2 * C2max * (P0 + M * G - B2 * v2) - v2 * |v2|  = 0
+		% u3^2 * C2max * (P0 + M * G - B2 * v2) - v2 * |v2|  = 0
 		%c(irow+3) = x1(2)^2 * model.C2max * (P0 + x1(7) * model.G - model.B2 * x1(5) ) - x1(5)*abs(x1(5);
-		J(irow+3,ix1(2)) = 2*x1(2)*model.C2maxsquared * (x1(7) * model.G - model.B2 * x1(5) );
-		J(irow+3,ix1(5)) = -x1(2)^2 * model.C2maxsquared * model.B2 - 2*abs(x1(5));
-		J(irow+3,ix1(7)) = x1(2)^2 * model.C2maxsquared * model.G;
+		J(irow+3,ix1(8)) =  2*x1(8)*model.C2maxsquared * (x1(7) * model.G - model.B2 * x1(5) );
+		J(irow+3,ix1(5)) = -x1(8)^2 * model.C2maxsquared * model.B2 - 2*abs(x1(5));
+		J(irow+3,ix1(7)) =  x1(8)^2 * model.C2maxsquared * model.G;
 
 		%  advance ix1 and irow to next node
 		ix1 = ix1 + model.Nvarpernode;
@@ -589,22 +649,22 @@ function [f] = objfun(X, Prob);
 	% term 2: moment tracking
 	f2 = model.w2 * mean( ( (X(model.iM) - model.gait.M)/model.gait.Msd ).^2 );
 	
-	% term 3: acceleration of valve 1 control
-	f3 = model.w3 * mean( (X(model.iu1(:,1)) - 2*X(model.iu1(:,2)) + X(model.iu1(:,3)) ).^2 )/h^2;
+	% term 3: acceleration of valve U2 control
+	f3 = model.w3 * mean( (X(model.iu2(:,1)) - 2*X(model.iu2(:,2)) + X(model.iu2(:,3)) ).^2 )/h^2;
+    
+	% term 4: acceleration of valve U3 control
+	f4 = model.w4 * mean( (X(model.iu3(:,1)) - 2*X(model.iu3(:,2)) + X(model.iu3(:,3)) ).^2 )/h^2;
 	
-	% term 4: acceleration of valve 2 control
-	f4 = model.w4 * mean( (X(model.iu2(:,1)) - 2*X(model.iu2(:,2)) + X(model.iu2(:,3)) ).^2 )/h^2;
-	
-    % term 5: Square of the flow rate for pump
-    f5 = model.w5 * mean( (X(model.iu3(:,2))) ).^2;
+    % term 5: Square of the flow rate for pump U1
+    f5 = model.w5 * mean( (X(model.iu1(:,2))) ).^2;
     
 	% regularization term
 	freg = model.wreg * sum(X.^2);
 	
 	% discretization term
 	if model.Wdisc ~= 0
-		fdisc = model.Wdisc * sum(sin(pi*(model.Ndisc-1)*X(model.iu)).^2);
-	else
+		fdisc = model.Wdisc * sum(sin(pi*(model.Ndisc-1)*X(model.iu)).^2);  % Should there be an integer by the third model element?
+    else
 		fdisc = 0;
     end
     
@@ -621,8 +681,10 @@ function [f] = objfun(X, Prob);
 	tic;
 	
 	if (model.print)
+        disp('')
 		fprintf('%d: Normc: %9.5f   ', model.eval, model.normc);
 		fprintf('Objfun: %8.4f=%8.4f(ang)+%8.4f(mom)+%8.4f(u1)+%8.4f(u2)+%8.4f(u3)+%8.4f(reg)+%8.4f(dis)\n', f,f1,f2,f3,f4,f5,freg, fdisc);
+        disp('')
 	end
 
 	if (model.plot)
@@ -648,15 +710,15 @@ function [g] = objgrad(X);
 	% term 2: moment tracking
 	g(model.iM) = model.w2 * 2 * (X(model.iM) - model.gait.M)/model.gait.Msd^2/model.N;
 	
-	% term 3: acceleration of valve 1 control
-	g(model.iu1(:,1)) = model.w3 * 2 * (X(model.iu1(:,1)) - 2*X(model.iu1(:,2)) + X(model.iu1(:,3)) )/model.N/h^2;
-	g(model.iu1(:,2)) = g(model.iu1(:,2)) - model.w3 * 4 * (X(model.iu1(:,1)) - 2*X(model.iu1(:,2)) + X(model.iu1(:,3)) )/model.N/h^2;
-	g(model.iu1(:,3)) = g(model.iu1(:,3)) + model.w3 * 2 * (X(model.iu1(:,1)) - 2*X(model.iu1(:,2)) + X(model.iu1(:,3)) )/model.N/h^2;
+	% term 3: acceleration of valve U2 control
+	g(model.iu2(:,1)) = model.w3 * 2 * (X(model.iu2(:,1)) - 2*X(model.iu2(:,2)) + X(model.iu2(:,3)) )/model.N/h^2;
+	g(model.iu2(:,2)) = g(model.iu2(:,2)) - model.w3 * 4 * (X(model.iu2(:,1)) - 2*X(model.iu2(:,2)) + X(model.iu2(:,3)) )/model.N/h^2;
+	g(model.iu2(:,3)) = g(model.iu2(:,3)) + model.w3 * 2 * (X(model.iu2(:,1)) - 2*X(model.iu2(:,2)) + X(model.iu2(:,3)) )/model.N/h^2;
 	
-	% term 4: acceleration of valve 2 control
-	g(model.iu2(:,1)) = model.w4 * 2 * (X(model.iu2(:,1)) - 2*X(model.iu2(:,2)) + X(model.iu2(:,3)) )/model.N/h^2;
-	g(model.iu2(:,2)) = g(model.iu2(:,2)) - model.w4 * 4 * (X(model.iu2(:,1)) - 2*X(model.iu2(:,2)) + X(model.iu2(:,3)) )/model.N/h^2;
-	g(model.iu2(:,3)) = g(model.iu2(:,3)) + model.w4 * 2 * (X(model.iu2(:,1)) - 2*X(model.iu2(:,2)) + X(model.iu2(:,3)) )/model.N/h^2;
+	% term 4: acceleration of valve U3 control
+	g(model.iu3(:,1)) = model.w4 * 2 * (X(model.iu3(:,1)) - 2*X(model.iu3(:,2)) + X(model.iu3(:,3)) )/model.N/h^2;
+	g(model.iu3(:,2)) = g(model.iu3(:,2)) - model.w4 * 4 * (X(model.iu3(:,1)) - 2*X(model.iu3(:,2)) + X(model.iu3(:,3)) )/model.N/h^2;
+	g(model.iu3(:,3)) = g(model.iu3(:,3)) + model.w4 * 2 * (X(model.iu3(:,1)) - 2*X(model.iu3(:,2)) + X(model.iu3(:,3)) )/model.N/h^2;
 
 	% regularization term
 	g = g + model.wreg*2*X;
@@ -717,8 +779,9 @@ function [s] = IPOPTstatus(code);
 		s = 'IPOPT failed: invalid option';
 	elseif code==-13
 		s = 'IPOPT failed: invalid number detected';
+
 	elseif code==-100
-		s = 'IPOPT failed: unrecoverable exception';
+		s = 'IPOPT failed: unrecoverable exception'; % divide by zero
 	elseif code==-101
 		s = 'IPOPT failed: non-IPOPT exception thrown';
 	elseif code==-102
